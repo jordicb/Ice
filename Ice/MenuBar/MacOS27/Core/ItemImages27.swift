@@ -202,24 +202,61 @@ enum ItemImages27 {
     /// came through as a faint streak beside every one of them, at the very same pixels
     /// (measured on macOS 27.0). A glyph's own soft rim touches its solid core, while such a
     /// mark stands apart and never reaches solid, so marks are kept or dropped whole.
+    ///
+    /// Some glyphs are drawn part-dimmed on purpose: Tailscale draws its idle dots at about
+    /// 40 % opacity beside a solid one (measured on macOS 27.0.1). Those dots stand apart and
+    /// never reach solid either, but unlike wallpaper they sit wholly inside the tile and are
+    /// a fair size next to the glyph's solid marks: 37 px against a 54 px solid dot, where the
+    /// wallpaper specks in the same capture came to 1–5 px. Such a mark is kept, and its
+    /// opacity is given back what `glyphPriorFloor` took from it, or it would be drawn at a
+    /// tenth of its strength.
     static func droppingFaintMarks(pixels: [UInt8], width: Int, height: Int) -> [UInt8] {
         let count = width * height
         guard count > 0, pixels.count >= count * 4 else {
             return pixels
         }
+        let marks = separateMarks(pixels: pixels, width: width, height: height)
+        let smallestSolidMark = marks.filter { $0.strongest >= solidMark }.map(\.pixels.count).min()
         var result = pixels
+        for mark in marks where mark.strongest < solidMark {
+            if let smallestSolidMark, isDimmedPart(mark, smallestSolidMark: smallestSolidMark) {
+                for pixel in mark.pixels {
+                    let alpha = Double(pixels[pixel * 4 + 3]) / 255
+                    let restored = glyphPriorFloor + (1 - glyphPriorFloor) * alpha
+                    result[pixel * 4 + 3] = UInt8((restored * 255).rounded())
+                }
+            } else {
+                for pixel in mark.pixels {
+                    result[pixel * 4 + 3] = 0
+                }
+            }
+        }
+        return result
+    }
+
+    /// A connected run of visible pixels, neighbours in all eight directions.
+    private struct Mark {
+        var pixels: [Int]
+        var strongest: UInt8
+        var touchesEdge: Bool
+    }
+
+    private static func separateMarks(pixels: [UInt8], width: Int, height: Int) -> [Mark] {
+        let count = width * height
+        var marks = [Mark]()
         var visited = [Bool](repeating: false, count: count)
         for start in 0..<count where !visited[start] && pixels[start * 4 + 3] > visibleAlpha {
-            // Gather the mark this pixel belongs to, neighbours in all eight directions.
-            var mark = [start]
-            var strongest = pixels[start * 4 + 3]
+            var mark = Mark(pixels: [start], strongest: pixels[start * 4 + 3], touchesEdge: false)
             visited[start] = true
             var cursor = 0
-            while cursor < mark.count {
-                let pixel = mark[cursor]
+            while cursor < mark.pixels.count {
+                let pixel = mark.pixels[cursor]
                 cursor += 1
                 let x = pixel % width
                 let y = pixel / width
+                if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
+                    mark.touchesEdge = true
+                }
                 for dy in -1...1 {
                     for dx in -1...1 where dx != 0 || dy != 0 {
                         let nx = x + dx
@@ -232,23 +269,27 @@ enum ItemImages27 {
                             continue
                         }
                         visited[neighbour] = true
-                        strongest = max(strongest, pixels[neighbour * 4 + 3])
-                        mark.append(neighbour)
+                        mark.strongest = max(mark.strongest, pixels[neighbour * 4 + 3])
+                        mark.pixels.append(neighbour)
                     }
                 }
             }
-            guard strongest < solidMark else {
-                continue
-            }
-            for pixel in mark {
-                result[pixel * 4 + 3] = 0
-            }
+            marks.append(mark)
         }
-        return result
+        return marks
+    }
+
+    /// Whether a faint mark is a part of the glyph drawn dimmed rather than wallpaper.
+    private static func isDimmedPart(_ mark: Mark, smallestSolidMark: Int) -> Bool {
+        !mark.touchesEdge && Double(mark.pixels.count) >= Double(smallestSolidMark) * dimmedPartShare
     }
 
     /// The opacity a mark must reach somewhere to be part of the glyph.
     private static let solidMark: UInt8 = 160
+
+    /// How large a faint mark must be, against the glyph's smallest solid mark, to be a
+    /// dimmed part of the glyph rather than a speck of wallpaper.
+    private static let dimmedPartShare = 0.25
 
     /// Pixels at least this share of the glyph's distance from the background are clearly
     /// off it, and so tell the glyph's colour.

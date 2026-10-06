@@ -522,6 +522,61 @@ struct FadedTile27Tests {
             #expect(alpha(8, y) == 0)
         }
     }
+
+    /// A tile with a solid square at (1...4, 1...4), and whatever else the test sets.
+    func tileWithSolidSquare(width: Int, height: Int) -> [UInt8] {
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 1...4 {
+            for x in 1...4 {
+                pixels[(y * width + x) * 4 + 3] = 255
+            }
+        }
+        return pixels
+    }
+
+    @Test("A dimmed part of the glyph, like Tailscale's idle dots, is kept and given back its strength")
+    func dimmedPartKept() {
+        let width = 12
+        let height = 8
+        var pixels = tileWithSolidSquare(width: width, height: height)
+        // A faint dot of 9 px beside a 16 px solid one, wholly inside the tile.
+        for y in 2...4 {
+            for x in 7...9 {
+                pixels[(y * width + x) * 4 + 3] = 25
+            }
+        }
+        let result = ItemImages27.droppingFaintMarks(pixels: pixels, width: width, height: height)
+        let restored = result[(3 * width + 8) * 4 + 3]
+        #expect(restored > 25)
+        #expect(restored < 160)
+        #expect(result[(2 * width + 2) * 4 + 3] == 255)
+    }
+
+    @Test("A small speck of wallpaper inside the tile is still dropped")
+    func speckDropped() {
+        let width = 12
+        let height = 8
+        var pixels = tileWithSolidSquare(width: width, height: height)
+        pixels[(3 * width + 8) * 4 + 3] = 25
+        pixels[(3 * width + 9) * 4 + 3] = 25
+        let result = ItemImages27.droppingFaintMarks(pixels: pixels, width: width, height: height)
+        #expect(result[(3 * width + 8) * 4 + 3] == 0)
+        #expect(result[(3 * width + 9) * 4 + 3] == 0)
+    }
+
+    @Test("A large faint mark that runs off the tile is wallpaper and is dropped")
+    func largeEdgeMarkDropped() {
+        let width = 12
+        let height = 8
+        var pixels = tileWithSolidSquare(width: width, height: height)
+        for y in 0..<height {
+            for x in 8...10 {
+                pixels[(y * width + x) * 4 + 3] = 40
+            }
+        }
+        let result = ItemImages27.droppingFaintMarks(pixels: pixels, width: width, height: height)
+        #expect(result[(4 * width + 9) * 4 + 3] == 0)
+    }
 }
 
 @Suite("Items zone")
